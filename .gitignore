@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environment
+*venv/
+
+# Django static files
+staticfiles/
+
+# Environment
+.env
+
+# Logs
+*.log
+django.log
+celery_worker.log
+celery_beat.log

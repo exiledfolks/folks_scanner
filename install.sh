@@ -2,7 +2,7 @@
 
 set -e
 
-REPO_URL="https://github.com/yourusername/yourrepo.git"
+REPO_URL="https://github.com/exiledfolks/folks_scanner.git"
 PROJECT_DIR="folks_project"
 VENV_DIR="folks_venv"
 RANDOM_PORT=$(( RANDOM % 10000 + 30000 ))
@@ -14,20 +14,31 @@ git clone $REPO_URL $PROJECT_DIR
 cd $PROJECT_DIR || exit 1
 
 echo "🐍 Setting up virtualenv..."
-virtualenv -p python3 $VENV_DIR
+python3 -m venv $VENV_DIR
 source $VENV_DIR/bin/activate
 
 echo "🛠 Installing dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
+echo "🔑 Please enter Telegram API ID (or type 'no' to skip):"
+read TELEGRAM_API_ID
+
+if [ "$TELEGRAM_API_ID" != "no" ]; then
+    echo "🔑 Please enter Telegram API HASH:"
+    read TELEGRAM_API_HASH
+else
+    TELEGRAM_API_ID=""
+    TELEGRAM_API_HASH=""
+fi
+
 echo "🔧 Creating .env..."
 cat > .env <<EOF
 DEBUG=False
 SECRET_KEY=$(openssl rand -hex 32)
 ALLOWED_HOSTS=localhost
-TELEGRAM_API_ID=your_api_id
-TELEGRAM_API_HASH=your_api_hash
+TELEGRAM_API_ID=$TELEGRAM_API_ID
+TELEGRAM_API_HASH=$TELEGRAM_API_HASH
 XRAY_PATH=./xray
 CELERY_BROKER_URL=redis://localhost:6379/0
 EOF
@@ -50,7 +61,7 @@ echo "⚙ Configuring Supervisor..."
 SUPERVISOR_CONF="/etc/supervisor/conf.d/folks_scanner.conf"
 sudo bash -c "cat > $SUPERVISOR_CONF" <<EOF
 [program:folks_web]
-command=$(pwd)/$VENV_DIR/bin/gunicorn folks_project.wsgi:application --bind 0.0.0.0:$RANDOM_PORT
+command=$(pwd)/$VENV_DIR/bin/gunicorn config.wsgi:application --bind 0.0.0.0:$RANDOM_PORT
 directory=$(pwd)
 autostart=true
 autorestart=true
@@ -58,7 +69,7 @@ stdout_logfile=$(pwd)/logs/web.log
 stderr_logfile=$(pwd)/logs/web.err
 
 [program:folks_celery]
-command=$(pwd)/$VENV_DIR/bin/celery -A folks_project worker --loglevel=info
+command=$(pwd)/$VENV_DIR/bin/celery -A config worker --loglevel=info
 directory=$(pwd)
 autostart=true
 autorestart=true
@@ -66,7 +77,7 @@ stdout_logfile=$(pwd)/logs/celery.log
 stderr_logfile=$(pwd)/logs/celery.err
 
 [program:folks_celery_beat]
-command=$(pwd)/$VENV_DIR/bin/celery -A folks_project beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+command=$(pwd)/$VENV_DIR/bin/celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 directory=$(pwd)
 autostart=true
 autorestart=true

@@ -10,7 +10,7 @@ DJANGO_SUPERUSER="admin"
 DJANGO_SUPERPASS=$(openssl rand -hex 12)
 
 echo "🛠️ Installing system packages..."
-sudo apt update
+sudo apt update || true
 sudo apt install -y python3.12 python3.12-venv python3.12-distutils python3-pip redis-server supervisor git curl
 
 # Ensure ensurepip exists
@@ -21,10 +21,10 @@ fi
 
 # Check and remove old project folder
 if [ -d "$PROJECT_DIR" ]; then
-    echo "⚠ WARNING: $PROJECT_DIR already exists and will be DELETED!"
-    read -p "Type 'yes' to continue: " confirm
+    echo "⚠ WARNING: Directory $PROJECT_DIR already exists and will be DELETED!"
+    read -p "Type 'yes' to confirm deletion: " confirm
     if [ "$confirm" != "yes" ]; then
-        echo "❌ Aborted."
+        echo "❌ Aborted by user."
         exit 1
     fi
     echo "🗑 Removing existing $PROJECT_DIR..."

@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import datetime
 import json
@@ -9,16 +8,22 @@ import signal
 import socket
 import subprocess
 import time
-import requests
 
-from telethon import TelegramClient
+import requests
 from django.conf import settings
-from .models import Node, Channel, Mirror
+from django.utils import timezone
+
+from .models import Channel, Mirror, Node
 
 # === CONFIGURATION ===
 api_id = getattr(settings, 'TELEGRAM_API_ID', None)
 api_hash = getattr(settings, 'TELEGRAM_API_HASH', None)
 timeout = 10
+
+try:
+    from telethon.sync import TelegramClient  # sync import!
+except ImportError:
+    TelegramClient = None
 
 patterns = {
     'vless': re.compile(r'vless://[^\s]+'),
@@ -224,49 +229,90 @@ def fetch_mirror_links(mirror_urls):
             print(f"❌ Error fetching {url}: {e}")
     return mirror_links
 
-async def run_full_scan():
-    use_telegram = api_id and api_hash
+def run_full_scan_sync(channel_ids=None, mirror_ids=None):
+    use_telegram = api_id and api_hash and TelegramClient is not None
     collected_links = {proto: set() for proto in patterns.keys()}
     seen_keys = set()
 
-    if use_telegram:
-        client = TelegramClient('session_name', api_id, api_hash)
-        await client.start()
-        print(f'✅ Connected to Telegram')
+    # Determine trigger source and filter accordingly
+    # If called with mirror_ids: only check mirrors, skip channels
+    # If called with channel_ids: only check channels, skip mirrors
+    # If neither: check both
 
-        channel_usernames = list(Channel.objects.values_list('name', flat=True))
-        today = datetime.date.today()
-        for channel_username in channel_usernames:
+    do_channels = channel_ids is not None or (channel_ids is None and mirror_ids is None)
+    do_mirrors = mirror_ids is not None or (channel_ids is None and mirror_ids is None)
+
+    # Channels
+    if do_channels:
+        channel_qs = Channel.objects.filter(active=True)
+        if channel_ids is not None:
+            channel_qs = channel_qs.filter(id__in=channel_ids)
+        # Telegram part
+        if use_telegram:
             try:
-                channel = await client.get_entity(channel_username)
-                print(f'🔍 Reading channel: {channel_username}')
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                channel_usernames = list(channel_qs.values_list('username', flat=True))
+
+                async def fetch_telegram(channel_usernames):
+                    client = TelegramClient('session_name', api_id, api_hash, loop=loop)
+                    await client.start()
+                    print(f'✅ Connected to Telegram')
+
+                    today = datetime.date.today()
+                    yesterday = today - datetime.timedelta(days=1)
+                    for channel_username in channel_usernames:
+                        try:
+                            channel = await client.get_entity(channel_username)
+                            print(f'🔍 Reading channel: {channel_username}')
+                        except Exception as e:
+                            print(f'❌ Cannot get channel {channel_username}: {e}')
+                            continue
+
+                        async for message in client.iter_messages(channel, limit=500):
+                            msg_date = message.date.date()
+                            if msg_date != today and msg_date != yesterday:
+                                continue
+                            if message.text:
+                                for proto, pattern in patterns.items():
+                                    matches = pattern.findall(message.text)
+                                    for link in matches:
+                                        collected_links[proto].add(link.strip())
+
+                    await client.disconnect()
+
+                loop.run_until_complete(fetch_telegram(channel_usernames))
+
             except Exception as e:
-                print(f'❌ Cannot get channel {channel_username}: {e}')
-                continue
+                print(f'⚠️ Telegram fetch failed, skipping: {e}')
 
-            async for message in client.iter_messages(channel, limit=500):
-                if message.date.date() != today:
-                    continue
-                if message.text:
-                    for proto, pattern in patterns.items():
-                        matches = pattern.findall(message.text)
-                        for link in matches:
-                            collected_links[proto].add(link.strip())
+    # Mirrors
+    if do_mirrors:
+        mirror_qs = Mirror.objects.filter(active=True)
+        if mirror_ids is not None:
+            mirror_qs = mirror_qs.filter(id__in=mirror_ids)
+        mirror_urls = list(mirror_qs.values_list('url', flat=True))
+        mirror_links = fetch_mirror_links(mirror_urls)
+        for proto in patterns.keys():
+            collected_links[proto].update(mirror_links[proto])
 
-        await client.disconnect()
-
-    mirror_urls = list(Mirror.objects.values_list('url', flat=True))
-    mirror_links = fetch_mirror_links(mirror_urls)
-    for proto in patterns.keys():
-        collected_links[proto].update(mirror_links[proto])
-
-    # --- Deduplicate + filter + save ---
+    # === Process + Save (same as before) ===
     final_nodes = []
+    update_nodes = []
+    node_keys = {}
+    def extract_remark(link):
+        if '#' in link:
+            return link.split('#', 1)[1]
+        return ''
+
     for proto in collected_links:
         for link in collected_links[proto]:
             modified = modify_remark(link, proto)
             host, port = extract_host_port(modified, proto)
             user = extract_user_id(modified, proto)
+            remark = extract_remark(modified)
             key = f"{proto}-{host}-{port}-{user}"
             if host and port and key not in seen_keys:
                 delay = tcp_ping(host, port, timeout)
@@ -276,19 +322,68 @@ async def run_full_scan():
                     socks_port = random.randint(10000, 20000)
                     ok, speed = test_config_with_xray(modified, proto, socks_port, timeout=20)
                     if ok:
-                        final_nodes.append(Node(
-                            protocol=proto,
-                            link=modified,
-                            host=host,
-                            port=port,
-                            speed_kbps=speed,
-                            checked_at=datetime.datetime.now()
-                        ))
+                        node_keys[key] = {
+                            'protocol': proto,
+                            'raw_link': modified,
+                            'host': host,
+                            'port': port,
+                            'remark': remark,
+                            'last_speed_kbps': speed,
+                            'last_checked': timezone.now(),
+                            'is_working': ok,
+                        }
                 else:
                     print(f'❌ {proto.upper()} {host}:{port} → TCP fail ({delay}ms)')
 
+    # Re-test all existing nodes for the selected channels/mirrors (or all if none selected)
+    from django.db.models import Q
+
+    # Build a filter for existing nodes based on the scan scope
+    node_filter = Q()
+    if do_channels:
+        # If scanning channels, filter by hosts/ports found in those channels
+        # (or all if no new found, fallback to all active nodes)
+        pass  # No additional filter, as we want to re-test all
+    if do_mirrors:
+        # If scanning mirrors, filter by hosts/ports found in those mirrors
+        pass  # No additional filter, as we want to re-test all
+    # If both, just re-test all
+    existing_nodes = Node.objects.all()
+    nodes_to_keep = set()
+    nodes_to_delete = []
+    for n in existing_nodes:
+        # Re-test node
+        delay = tcp_ping(n.host, n.port, timeout)
+        if 0 < delay < 1050:
+            print(f'✅ RETEST {n.protocol.upper()} {n.host}:{n.port} → {delay}ms')
+            n.last_checked = timezone.now()
+            n.is_working = True
+            update_nodes.append(n)
+            nodes_to_keep.add(f"{n.protocol}-{n.host}-{n.port}-{extract_user_id(n.raw_link, n.protocol)}")
+        else:
+            print(f'❌ RETEST {n.protocol.upper()} {n.host}:{n.port} → TCP fail ({delay}ms)')
+            nodes_to_delete.append(n.pk)
+    if nodes_to_delete:
+        Node.objects.filter(pk__in=nodes_to_delete).delete()
+        print(f'\n🗑️ Deleted {len(nodes_to_delete)} non-working configs from Node table')
+    # Add new nodes that are not already kept
+    for k, v in node_keys.items():
+        if k not in nodes_to_keep:
+            final_nodes.append(Node(**v))
+
+    if update_nodes:
+        Node.objects.bulk_update(update_nodes, ['raw_link', 'last_speed_kbps', 'last_checked', 'is_working'])
+        print(f'\n✅ Updated {len(update_nodes)} existing configs in Node table')
     if final_nodes:
         Node.objects.bulk_create(final_nodes)
-        print(f'\n✅ Saved {len(final_nodes)} working configs to Node table')
-    else:
+        print(f'\n✅ Saved {len(final_nodes)} new working configs to Node table')
+    if not final_nodes and not update_nodes:
         print('\n⚠ No working configs found.')
+
+    # Cleanup: remove all test_*.json files created during config testing
+    import glob
+    for f in glob.glob("test_*.json"):
+        try:
+            os.remove(f)
+        except Exception as e:
+            print(f"Warning: could not remove {f}: {e}")

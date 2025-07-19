@@ -135,7 +135,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_RESULT_EXPIRES = 60 * 60 * 24  # 1 day
-CELERY_TASK_DEFAULT_QUEUE = 'default'
+CELERY_TASK_DEFAULT_QUEUE = 'folks_queue'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Shortcuts

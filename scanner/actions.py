@@ -249,44 +249,53 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
             channel_qs = channel_qs.filter(id__in=channel_ids)
         # Telegram part
         if use_telegram:
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            channel_usernames = list(channel_qs.values_list('username', flat=True))
+            if channel_usernames:
+                try:
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
 
-                channel_usernames = list(channel_qs.values_list('username', flat=True))
+                    async def fetch_telegram(channel_usernames):
+                        import getpass
+                        session_file = 'session_name.session'
+                        client = TelegramClient('session_name', api_id, api_hash, loop=loop)
+                        if not os.path.exists(session_file):
+                            print('No Telegram session found. You need to login.')
+                            phone = input('Enter your phone number (with country code, e.g. +989123456789): ')
+                            await client.start(phone=phone)
+                        else:
+                            await client.start()
+                        print(f'✅ Connected to Telegram')
 
-                async def fetch_telegram(channel_usernames):
-                    client = TelegramClient('session_name', api_id, api_hash, loop=loop)
-                    await client.start()
-                    print(f'✅ Connected to Telegram')
-
-                    today = datetime.date.today()
-                    yesterday = today - datetime.timedelta(days=1)
-                    for channel_username in channel_usernames:
-                        try:
-                            channel = await client.get_entity(channel_username)
-                            print(f'🔍 Reading channel: {channel_username}')
-                        except Exception as e:
-                            print(f'❌ Cannot get channel {channel_username}: {e}')
-                            continue
-
-                        async for message in client.iter_messages(channel, limit=500):
-                            msg_date = message.date.date()
-                            if msg_date != today and msg_date != yesterday:
+                        today = datetime.date.today()
+                        yesterday = today - datetime.timedelta(days=1)
+                        for channel_username in channel_usernames:
+                            try:
+                                channel = await client.get_entity(channel_username)
+                                print(f'🔍 Reading channel: {channel_username}')
+                            except Exception as e:
+                                print(f'❌ Cannot get channel {channel_username}: {e}')
                                 continue
-                            if message.text:
-                                for proto, pattern in patterns.items():
-                                    matches = pattern.findall(message.text)
-                                    for link in matches:
-                                        collected_links[proto].add(link.strip())
 
-                    await client.disconnect()
+                            async for message in client.iter_messages(channel, limit=500):
+                                msg_date = message.date.date()
+                                if msg_date != today and msg_date != yesterday:
+                                    continue
+                                if message.text:
+                                    for proto, pattern in patterns.items():
+                                        matches = pattern.findall(message.text)
+                                        for link in matches:
+                                            collected_links[proto].add(link.strip())
 
-                loop.run_until_complete(fetch_telegram(channel_usernames))
+                        await client.disconnect()
 
-            except Exception as e:
-                print(f'⚠️ Telegram fetch failed, skipping: {e}')
+                    loop.run_until_complete(fetch_telegram(channel_usernames))
+
+                except Exception as e:
+                    print(f'⚠️ Telegram fetch failed, skipping: {e}')
+            else:
+                print('ℹ️ No active channels found, skipping Telegram connection.')
 
     # Mirrors
     if do_mirrors:

@@ -9,9 +9,11 @@ RANDOM_PORT=$(( RANDOM % 10000 + 30000 ))
 DJANGO_SUPERUSER="admin"
 DJANGO_SUPERPASS=$(openssl rand -hex 12)
 
-echo "🛠️ Installing system packages..."
-sudo apt update || true
-sudo apt install -y python3.12 python3.12-venv python3.12-distutils python3-pip redis-server supervisor git curl
+echo "🛠️ Updating system packages..."
+sudo apt update || echo "⚠️ apt update had warnings, continuing..."
+
+echo "📦 Installing required system packages..."
+sudo apt install -y python3.12 python3.12-venv python3.12-distutils python3-pip redis-server supervisor git curl || echo "⚠️ apt install had warnings, continuing..."
 
 # Ensure ensurepip exists
 if ! python3.12 -m ensurepip --version >/dev/null 2>&1; then

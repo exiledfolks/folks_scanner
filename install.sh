@@ -19,8 +19,14 @@ if ! python3.12 -m ensurepip --version >/dev/null 2>&1; then
     curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3.12
 fi
 
-# Remove old project folder if exists
+# Check and remove old project folder
 if [ -d "$PROJECT_DIR" ]; then
+    echo "⚠ WARNING: $PROJECT_DIR already exists and will be DELETED!"
+    read -p "Type 'yes' to continue: " confirm
+    if [ "$confirm" != "yes" ]; then
+        echo "❌ Aborted."
+        exit 1
+    fi
     echo "🗑 Removing existing $PROJECT_DIR..."
     rm -rf $PROJECT_DIR
 fi

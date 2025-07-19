@@ -9,7 +9,28 @@ RANDOM_PORT=$(( RANDOM % 10000 + 30000 ))
 DJANGO_SUPERUSER="admin"
 DJANGO_SUPERPASS=$(openssl rand -hex 12)
 
-echo "🛠️ Updating system packages..."
+echo "🧹 Cleaning APT sources..."
+
+# Remove Android Studio repo if exists
+if [ -f /etc/apt/sources.list.d/android-studio.list ]; then
+    echo "🗑 Removing android-studio.list..."
+    sudo rm /etc/apt/sources.list.d/android-studio.list
+fi
+
+# Remove Google Chrome repo if exists
+if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
+    echo "🗑 Removing google-chrome.list..."
+    sudo rm /etc/apt/sources.list.d/google-chrome.list
+fi
+
+# Fix Postgres signed-by (optional)
+if [ -f /etc/apt/sources.list.d/pgdg.list ]; then
+    echo "🔑 Updating Postgres repo signed-by key..."
+    sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt noble-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/keyrings/postgresql.gpg >/dev/null
+fi
+
+echo "🔄 Running apt update..."
 sudo apt update || echo "⚠️ apt update had warnings, continuing..."
 
 echo "📦 Installing required system packages..."

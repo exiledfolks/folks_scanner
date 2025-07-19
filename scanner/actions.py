@@ -1,32 +1,24 @@
 import asyncio
-import random
-import time
-import requests
-import socket
-import subprocess
-import datetime
-import re
 import base64
+import datetime
 import json
 import os
+import random
+import re
 import signal
+import socket
+import subprocess
+import time
+import requests
 
 from telethon import TelegramClient
-
 from django.conf import settings
-
-from .models import Mirror, Channel, Node
+from .models import Node, Channel, Mirror
 
 # === CONFIGURATION ===
-
-API_ID = settings.TELEGRAM_API_ID
-API_HASH = settings.TELEGRAM_API_HASH
-XRAY_PATH = settings.XRAY_PATH
-
-TIMEOUT = 10
-
-
-# === REGEX PATTERNS ===
+api_id = getattr(settings, 'TELEGRAM_API_ID', None)
+api_hash = getattr(settings, 'TELEGRAM_API_HASH', None)
+timeout = 10
 
 patterns = {
     'vless': re.compile(r'vless://[^\s]+'),
@@ -41,8 +33,18 @@ def modify_remark(link, proto):
     if '#' in link:
         base, _ = link.split('#', 1)
         return f'{base}#{new_remark}'
+    elif proto in ['vless', 'vmess'] and 'remark=' in link:
+        return re.sub(r'(remark=)[^&]+', rf'\1{new_remark}', link)
     else:
         return f'{link}#{new_remark}'
+
+def parse_query_params(link):
+    try:
+        query = link.split('?', 1)[1].split('#')[0]
+        params = dict(x.split('=') for x in query.split('&') if '=' in x)
+        return params
+    except Exception:
+        return {}
 
 def extract_host_port(link, proto):
     try:
@@ -116,20 +118,46 @@ def wait_for_port(port, timeout=10):
     return False
 
 def build_xray_config(link, proto, socks_port):
-    # simplified here, can add full streamSettings parsing if needed
     host, port = extract_host_port(link, proto)
-    user_id = extract_user_id(link, proto)
-    outbound = {
-        "protocol": proto,
-        "settings": {
-            "vnext" if proto in ["vless", "vmess"] else "servers": [{
-                "address": host,
-                "port": port,
-                "users": [{"id": user_id}]
-            }]
-        },
-        "streamSettings": {"network": "tcp"}
-    }
+    params = parse_query_params(link)
+    if proto == 'ss':
+        user_id, method = extract_user_id(link, proto)
+    else:
+        user_id = extract_user_id(link, proto)
+        method = None
+
+    stream_settings = {"network": params.get('type', 'tcp')}
+    if params.get('security') == 'tls':
+        stream_settings["security"] = "tls"
+        if 'sni' in params:
+            stream_settings["tlsSettings"] = {"serverName": params['sni']}
+    if stream_settings['network'] == 'ws':
+        stream_settings['wsSettings'] = {"path": params.get('path', '/'), "headers": {"Host": params.get('host', host)}}
+    if stream_settings['network'] == 'grpc':
+        stream_settings['grpcSettings'] = {"serviceName": params.get('serviceName', ''), "multiMode": False}
+
+    if proto in ['vless', 'vmess']:
+        outbound = {
+            "protocol": proto,
+            "settings": {
+                "vnext": [{
+                    "address": host,
+                    "port": port,
+                    "users": [{"id": user_id, "encryption": "none" if proto == 'vless' else "auto"}]
+                }]
+            },
+            "streamSettings": stream_settings
+        }
+    elif proto == 'trojan':
+        outbound = {
+            "protocol": "trojan",
+            "settings": {"servers": [{"address": host, "port": port, "password": user_id}]}
+        }
+    elif proto == 'ss':
+        outbound = {
+            "protocol": "shadowsocks",
+            "settings": {"servers": [{"address": host, "port": port, "password": user_id, "method": method}]}
+        }
     return {
         "log": {"loglevel": "warning"},
         "inbounds": [{"port": socks_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": True}}],
@@ -137,31 +165,37 @@ def build_xray_config(link, proto, socks_port):
     }
 
 def test_config_with_xray(link, proto, socks_port, timeout=20):
+    xray_path = './xray'
     config_file = f'test_{socks_port}.json'
-    success, speed_kbps = False, 0
+    success = False
+    speed_kbps = 0
+
     try:
         with open(config_file, 'w') as f:
             json.dump(build_xray_config(link, proto, socks_port), f)
 
-        proc = subprocess.Popen([XRAY_PATH, 'run', '-c', config_file],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                preexec_fn=os.setsid)
+        proc = subprocess.Popen([xray_path, 'run', '-c', config_file], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
 
-        if not wait_for_port(socks_port):
+        if not wait_for_port(socks_port, timeout=10):
+            print("⚠️ Xray failed to open port")
             return False, 0
 
         start = time.time()
         result = subprocess.run(['curl', '--socks5-hostname', f'127.0.0.1:{socks_port}', '-o', '/dev/null',
                                  '-m', str(timeout), 'http://speedtest.tele2.net/1MB.zip'],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        duration = time.time() - start
-
+        end = time.time()
+        duration = end - start
         if result.returncode == 0:
             speed_kbps = round((1024 / duration), 2)
+            print(f"✅ Speed: {speed_kbps} KB/s")
             success = True
+        else:
+            print(f"❌ Speed test failed: {result.stderr.decode().strip()}")
 
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Error: {e}")
     finally:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -169,84 +203,92 @@ def test_config_with_xray(link, proto, socks_port, timeout=20):
             pass
         if os.path.exists(config_file):
             os.remove(config_file)
+
     return success, speed_kbps
 
-def fetch_mirror_links():
-    all_links = []
-    for mirror in Mirror.objects.filter(active=True):
+def fetch_mirror_links(mirror_urls):
+    mirror_links = {proto: set() for proto in patterns.keys()}
+    for url in mirror_urls:
         try:
-            resp = requests.get(mirror.url, timeout=10)
+            resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
                 text = resp.text
                 for proto, pattern in patterns.items():
-                    all_links += pattern.findall(text)
-        except Exception:
-            continue
-    return all_links
+                    matches = pattern.findall(text)
+                    for link in matches:
+                        mirror_links[proto].add(link.strip())
+                print(f"✅ Fetched from {url}")
+            else:
+                print(f"❌ Failed to fetch {url} (status {resp.status_code})")
+        except Exception as e:
+            print(f"❌ Error fetching {url}: {e}")
+    return mirror_links
 
-async def fetch_telegram_links():
-    client = TelegramClient('session', API_ID, API_HASH)
-    await client.start()
-    all_links = []
-    today = datetime.date.today()
-    for channel in Channel.objects.filter(active=True):
-        try:
-            entity = await client.get_entity(channel.username)
-            async for msg in client.iter_messages(entity, limit=500):
-                if msg.date.date() != today:
-                    continue
-                if msg.text:
-                    for proto, pattern in patterns.items():
-                        all_links += pattern.findall(msg.text)
-        except Exception:
-            continue
-    await client.disconnect()
-    return all_links
-
-def run_full_scan():
-    """
-    Entry point to scan mirrors and channels, and update Node model.
-    """
-    print("🔎 Starting full scan...")
-    all_links = set()
-
-    # Step 1: get mirror links
-    all_links.update(fetch_mirror_links())
-
-    # Step 2: get telegram links (sync run of async)
-    telegram_links = asyncio.run(fetch_telegram_links())
-    all_links.update(telegram_links)
-
+async def run_full_scan():
+    use_telegram = api_id and api_hash
+    collected_links = {proto: set() for proto in patterns.keys()}
     seen_keys = set()
-    for link in all_links:
-        for proto in patterns.keys():
-            if link.startswith(f"{proto}://"):
-                modified = modify_remark(link, proto)
-                host, port = extract_host_port(modified, proto)
-                user = extract_user_id(modified, proto)
-                key = f"{proto}-{host}-{port}-{user}"
-                if not host or key in seen_keys:
+
+    if use_telegram:
+        client = TelegramClient('session_name', api_id, api_hash)
+        await client.start()
+        print(f'✅ Connected to Telegram')
+
+        channel_usernames = list(Channel.objects.values_list('name', flat=True))
+        today = datetime.date.today()
+        for channel_username in channel_usernames:
+            try:
+                channel = await client.get_entity(channel_username)
+                print(f'🔍 Reading channel: {channel_username}')
+            except Exception as e:
+                print(f'❌ Cannot get channel {channel_username}: {e}')
+                continue
+
+            async for message in client.iter_messages(channel, limit=500):
+                if message.date.date() != today:
                     continue
-                seen_keys.add(key)
+                if message.text:
+                    for proto, pattern in patterns.items():
+                        matches = pattern.findall(message.text)
+                        for link in matches:
+                            collected_links[proto].add(link.strip())
 
-                # TCP ping check
-                delay = tcp_ping(host, port, timeout=5)
-                if delay < 0 or delay > 1050:
-                    continue
+        await client.disconnect()
 
-                # Real Xray check
-                socks_port = random.randint(10000, 20000)
-                ok, speed = test_config_with_xray(modified, proto, socks_port)
+    mirror_urls = list(Mirror.objects.values_list('url', flat=True))
+    mirror_links = fetch_mirror_links(mirror_urls)
+    for proto in patterns.keys():
+        collected_links[proto].update(mirror_links[proto])
 
-                # Save or update in DB
-                node, created = Node.objects.get_or_create(
-                    protocol=proto, host=host, port=port, user_id=user,
-                    defaults={'raw_link': modified, 'source': None}
-                )
-                node.raw_link = modified
-                node.last_ping_ms = delay
-                node.last_speed_kbps = speed
-                node.is_working = ok
-                node.remark = f"🕊️ freedom-{random.randint(1000,9999)}"
-                node.save()
-    print("✅ Scan completed!")
+    # --- Deduplicate + filter + save ---
+    final_nodes = []
+    for proto in collected_links:
+        for link in collected_links[proto]:
+            modified = modify_remark(link, proto)
+            host, port = extract_host_port(modified, proto)
+            user = extract_user_id(modified, proto)
+            key = f"{proto}-{host}-{port}-{user}"
+            if host and port and key not in seen_keys:
+                delay = tcp_ping(host, port, timeout)
+                if 0 < delay < 1050:
+                    print(f'✅ {proto.upper()} {host}:{port} → {delay}ms')
+                    seen_keys.add(key)
+                    socks_port = random.randint(10000, 20000)
+                    ok, speed = test_config_with_xray(modified, proto, socks_port, timeout=20)
+                    if ok:
+                        final_nodes.append(Node(
+                            protocol=proto,
+                            link=modified,
+                            host=host,
+                            port=port,
+                            speed_kbps=speed,
+                            checked_at=datetime.datetime.now()
+                        ))
+                else:
+                    print(f'❌ {proto.upper()} {host}:{port} → TCP fail ({delay}ms)')
+
+    if final_nodes:
+        Node.objects.bulk_create(final_nodes)
+        print(f'\n✅ Saved {len(final_nodes)} working configs to Node table')
+    else:
+        print('\n⚠ No working configs found.')

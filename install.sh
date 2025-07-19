@@ -9,15 +9,19 @@ RANDOM_PORT=$(( RANDOM % 10000 + 30000 ))
 DJANGO_SUPERUSER="admin"
 DJANGO_SUPERPASS=$(openssl rand -hex 12)
 
+echo "🛠️ Installing system packages..."
+sudo apt update
+sudo apt install -y python3.12-venv python3-pip redis-server supervisor git
+
 echo "🚀 Cloning project..."
 git clone $REPO_URL $PROJECT_DIR
 cd $PROJECT_DIR || exit 1
 
 echo "🐍 Setting up virtualenv..."
-python3 -m venv $VENV_DIR
+python3.12 -m venv $VENV_DIR
 source $VENV_DIR/bin/activate
 
-echo "🛠 Installing dependencies..."
+echo "🛠 Installing Python dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
@@ -32,7 +36,7 @@ else
     TELEGRAM_API_HASH=""
 fi
 
-echo "🔧 Creating .env..."
+echo "🔧 Creating .env file..."
 cat > .env <<EOF
 DEBUG=False
 SECRET_KEY=$(openssl rand -hex 32)
@@ -53,11 +57,13 @@ from django.contrib.auth import get_user_model; \
 u = get_user_model().objects.get(username='$DJANGO_SUPERUSER'); \
 u.set_password('$DJANGO_SUPERPASS'); u.save()"
 
-echo "📂 Collecting static..."
+echo "📂 Collecting static files..."
 python manage.py collectstatic --noinput
 
-echo "⚙ Configuring Supervisor..."
+echo "📂 Creating logs directory..."
+mkdir -p logs
 
+echo "⚙ Configuring Supervisor..."
 SUPERVISOR_CONF="/etc/supervisor/conf.d/folks_scanner.conf"
 sudo bash -c "cat > $SUPERVISOR_CONF" <<EOF
 [program:folks_web]
@@ -85,13 +91,12 @@ stdout_logfile=$(pwd)/logs/beat.log
 stderr_logfile=$(pwd)/logs/beat.err
 EOF
 
-mkdir -p logs
-
+echo "🔄 Reloading Supervisor..."
 sudo supervisorctl reread
 sudo supervisorctl update
 
 echo ""
 echo "✅ Deployment complete!"
-echo "🌐 Access admin at: http://<server_ip>:$RANDOM_PORT/admin/"
+echo "🌐 Admin panel: http://<server_ip>:$RANDOM_PORT/admin/"
 echo "👤 Admin username: $DJANGO_SUPERUSER"
 echo "🔑 Admin password: $DJANGO_SUPERPASS"

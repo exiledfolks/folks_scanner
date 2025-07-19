@@ -5,7 +5,7 @@ set -e
 REPO_URL="https://github.com/exiledfolks/folks_scanner.git"
 PROJECT_DIR="$HOME/folks_project"
 VENV_DIR="$PROJECT_DIR/folks_venv"
-DJANGO_MODULE="config"
+DJANGO_MODULE="config"  # change if needed!
 RANDOM_PORT=$(( RANDOM % 10000 + 30000 ))
 DJANGO_SUPERUSER="admin"
 DJANGO_SUPERPASS=$(openssl rand -hex 12)
@@ -77,10 +77,11 @@ nohup "$VENV_DIR/bin/gunicorn" "$DJANGO_MODULE.wsgi:application" --bind 0.0.0.0:
 nohup "$VENV_DIR/bin/celery" -A "$DJANGO_MODULE" worker --loglevel=info > logs_celery.out 2>&1 &
 nohup "$VENV_DIR/bin/celery" -A "$DJANGO_MODULE" beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler > logs_beat.out 2>&1 &
 
-echo "$PROJECT_DIR" > /usr/local/folks_project_path
-echo "$RANDOM_PORT" > /usr/local/folks_project_port
+# Save project path + port globally (with sudo)
+sudo bash -c "echo '$PROJECT_DIR' > /usr/local/folks_project_path"
+sudo bash -c "echo '$RANDOM_PORT' > /usr/local/folks_project_port"
 
-# Create global helper scripts
+# Create global helper: folks-logs
 sudo bash -c "cat > /usr/local/bin/folks-logs" <<'EOF'
 #!/bin/bash
 dir=$(cat /usr/local/folks_project_path)
@@ -93,6 +94,7 @@ esac
 EOF
 sudo chmod +x /usr/local/bin/folks-logs
 
+# Create global helper: folks-restart
 sudo bash -c "cat > /usr/local/bin/folks-restart" <<'EOF'
 #!/bin/bash
 dir=$(cat /usr/local/folks_project_path)
@@ -109,6 +111,7 @@ echo "✅ Services restarted"
 EOF
 sudo chmod +x /usr/local/bin/folks-restart
 
+# Create global helper: folks-stop
 sudo bash -c "cat > /usr/local/bin/folks-stop" <<'EOF'
 #!/bin/bash
 pkill -f gunicorn || true

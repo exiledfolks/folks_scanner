@@ -12,16 +12,8 @@ DJANGO_SUPERPASS=$(openssl rand -hex 12)
 echo "🧹 Cleaning APT sources..."
 
 # Remove Android Studio repo if exists
-if [ -f /etc/apt/sources.list.d/android-studio.list ]; then
-    echo "🗑 Removing android-studio.list..."
-    sudo rm /etc/apt/sources.list.d/android-studio.list
-fi
-
-# Remove Google Chrome repo if exists
-if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
-    echo "🗑 Removing google-chrome.list..."
-    sudo rm /etc/apt/sources.list.d/google-chrome.list
-fi
+sudo rm -f /etc/apt/sources.list.d/android-studio.list
+sudo rm -f /etc/apt/sources.list.d/google-chrome.list
 
 # Fix Postgres signed-by (optional)
 if [ -f /etc/apt/sources.list.d/pgdg.list ]; then
@@ -34,13 +26,7 @@ echo "🔄 Running apt update..."
 sudo apt update || echo "⚠️ apt update had warnings, continuing..."
 
 echo "📦 Installing required system packages..."
-sudo apt install -y python3.12 python3.12-venv python3.12-distutils python3-pip redis-server supervisor git curl || echo "⚠️ apt install had warnings, continuing..."
-
-# Ensure ensurepip exists
-if ! python3.12 -m ensurepip --version >/dev/null 2>&1; then
-    echo "⚙ Installing ensurepip for Python 3.12..."
-    curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3.12
-fi
+sudo apt install -y python3.12 python3.12-full python3.12-venv redis-server supervisor git curl || echo "⚠️ apt install had warnings, continuing..."
 
 # Check and remove old project folder
 if [ -d "$PROJECT_DIR" ]; then

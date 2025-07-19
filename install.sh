@@ -11,7 +11,19 @@ DJANGO_SUPERPASS=$(openssl rand -hex 12)
 
 echo "🛠️ Installing system packages..."
 sudo apt update
-sudo apt install -y python3.12-venv python3-pip redis-server supervisor git
+sudo apt install -y python3.12 python3.12-venv python3.12-distutils python3-pip redis-server supervisor git curl
+
+# Ensure ensurepip exists
+if ! python3.12 -m ensurepip --version >/dev/null 2>&1; then
+    echo "⚙ Installing ensurepip for Python 3.12..."
+    curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3.12
+fi
+
+# Remove old project folder if exists
+if [ -d "$PROJECT_DIR" ]; then
+    echo "🗑 Removing existing $PROJECT_DIR..."
+    rm -rf $PROJECT_DIR
+fi
 
 echo "🚀 Cloning project..."
 git clone $REPO_URL $PROJECT_DIR

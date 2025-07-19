@@ -74,7 +74,8 @@ mkdir -p logs
 
 echo "🚀 Starting services..."
 
-# Create systemd service for Gunicorn
+
+# Create systemd service for Gunicorn (with high timeout and file logging)
 sudo bash -c "cat > /etc/systemd/system/folks-gunicorn.service" <<EOF
 [Unit]
 Description=Folks Gunicorn Service
@@ -85,14 +86,16 @@ User=$USER
 WorkingDirectory=$PROJECT_DIR
 Environment=DJANGO_SETTINGS_MODULE=$DJANGO_MODULE.settings
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$VENV_DIR/bin/gunicorn $DJANGO_MODULE.wsgi:application --bind 0.0.0.0:$RANDOM_PORT --log-level debug
+ExecStart=$VENV_DIR/bin/gunicorn $DJANGO_MODULE.wsgi:application --bind 0.0.0.0:$RANDOM_PORT --log-level debug --timeout 600
+StandardOutput=append:$PROJECT_DIR/logs_web.out
+StandardError=append:$PROJECT_DIR/logs_web.out
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Create systemd service for Celery Worker
+# Create systemd service for Celery Worker (file logging)
 sudo bash -c "cat > /etc/systemd/system/folks-celery.service" <<EOF
 [Unit]
 Description=Folks Celery Worker Service
@@ -104,13 +107,15 @@ WorkingDirectory=$PROJECT_DIR
 Environment=DJANGO_SETTINGS_MODULE=$DJANGO_MODULE.settings
 Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV_DIR/bin/celery -A $DJANGO_MODULE worker --loglevel=info
+StandardOutput=append:$PROJECT_DIR/logs_celery.out
+StandardError=append:$PROJECT_DIR/logs_celery.out
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Create systemd service for Celery Beat
+# Create systemd service for Celery Beat (file logging)
 sudo bash -c "cat > /etc/systemd/system/folks-celery-beat.service" <<EOF
 [Unit]
 Description=Folks Celery Beat Service
@@ -122,6 +127,8 @@ WorkingDirectory=$PROJECT_DIR
 Environment=DJANGO_SETTINGS_MODULE=$DJANGO_MODULE.settings
 Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV_DIR/bin/celery -A $DJANGO_MODULE beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+StandardOutput=append:$PROJECT_DIR/logs_beat.out
+StandardError=append:$PROJECT_DIR/logs_beat.out
 Restart=always
 
 [Install]
@@ -229,7 +236,8 @@ sudo chmod +x /usr/local/bin/folks-celery-task
 
 echo ""
 echo "✅ Installation complete!"
-echo "🌐 Admin panel: http://<server_ip>:$RANDOM_PORT/admin/"
+SERVER_IP=$(hostname -I | awk '{print $1}')
+echo "🌐 Admin panel: http://$SERVER_IP:$RANDOM_PORT/admin/"
 echo "👤 Admin username: $DJANGO_SUPERUSER"
 echo "🔑 Admin password: $DJANGO_SUPERPASS"
 echo ""

@@ -19,7 +19,9 @@ staticfiles/
 django.log
 celery_worker.log
 celery_beat.log
-
+logs_beat.out
+logs_celery.out
+logs_web.out
 # Session and test config files
 *.session
 *.session-journal

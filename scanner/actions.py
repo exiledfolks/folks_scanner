@@ -12,6 +12,7 @@ import time
 import requests
 from django.conf import settings
 from django.utils import timezone
+from django.db.models import Max, Count
 
 from .models import Channel, Mirror, Node
 
@@ -320,9 +321,13 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
         for link in collected_links[proto]:
             modified = modify_remark(link, proto)
             host, port = extract_host_port(modified, proto)
-            user = extract_user_id(modified, proto)
+            if proto == 'ss':
+                user_id, method = extract_user_id(modified, proto)
+            else:
+                user_id = extract_user_id(modified, proto)
+                method = None
             remark = extract_remark(modified)
-            key = f"{proto}-{host}-{port}-{user}"
+            key = f"{proto}-{host}-{port}-{user_id}"
             if host and port and key not in seen_keys:
                 delay = tcp_ping(host, port, timeout)
                 if 0 < delay < 1050:
@@ -336,6 +341,7 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
                             'raw_link': modified,
                             'host': host,
                             'port': port,
+                            'user_id': user_id,
                             'remark': remark,
                             'last_speed_kbps': speed,
                             'last_checked': timezone.now(),
@@ -345,10 +351,6 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
                     print(f'❌ {proto.upper()} {host}:{port} → TCP fail ({delay}ms)')
 
     # Re-test all existing nodes for the selected channels/mirrors (or all if none selected)
-    from django.db.models import Q
-
-    # Build a filter for existing nodes based on the scan scope
-    node_filter = Q()
     if do_channels:
         # If scanning channels, filter by hosts/ports found in those channels
         # (or all if no new found, fallback to all active nodes)
@@ -375,6 +377,7 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
     if nodes_to_delete:
         Node.objects.filter(pk__in=nodes_to_delete).delete()
         print(f'\n🗑️ Deleted {len(nodes_to_delete)} non-working configs from Node table')
+
     # Add new nodes that are not already kept
     for k, v in node_keys.items():
         if k not in nodes_to_keep:
@@ -388,6 +391,26 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
         print(f'\n✅ Saved {len(final_nodes)} new working configs to Node table')
     if not final_nodes and not update_nodes:
         print('\n⚠ No working configs found.')
+    
+    # Cleanup: remove duplicate Node entries based on unique_together constraints
+    duplicates = (
+        Node.objects
+        .values('protocol', 'host', 'port', 'user_id')
+        .annotate(latest_id=Max('id'), count_id=Count('id'))
+        .filter(count_id__gt=1)
+    )
+
+    ids_to_keep = [d['latest_id'] for d in duplicates]
+    if ids_to_keep:
+        deleted, _ = Node.objects.exclude(id__in=ids_to_keep).filter(
+            protocol__in=[d['protocol'] for d in duplicates],
+            host__in=[d['host'] for d in duplicates],
+            port__in=[d['port'] for d in duplicates],
+            user_id__in=[d['user_id'] for d in duplicates],
+        ).delete()
+        print(f"\n🗑️ Deleted {deleted} duplicate Node records.")
+    else:
+        print("\n✅ No duplicate Node records found.")
 
     # Cleanup: remove all test_*.json files created during config testing
     import glob

@@ -40,6 +40,6 @@ class ChannelAdmin(admin.ModelAdmin):
 
 @admin.register(Node)
 class NodeAdmin(admin.ModelAdmin):
-    list_display = ('protocol', 'host', 'port', 'remark', 'is_working', 'last_speed_kbps', 'last_checked')
+    list_display = ('protocol', 'host', 'port', 'user_id', 'remark', 'is_working', 'last_speed_kbps', 'last_checked')
     list_filter = ('protocol', 'is_working')
     search_fields = ('host', 'remark', 'source')

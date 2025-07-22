@@ -322,7 +322,11 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
             modified = modify_remark(link, proto)
             host, port = extract_host_port(modified, proto)
             if proto == 'ss':
-                user_id, method = extract_user_id(modified, proto)
+                pass_method = extract_user_id(modified, proto)
+                if pass_method:
+                    user_id, method = pass_method
+                else:
+                    user_id = None
             else:
                 user_id = extract_user_id(modified, proto)
                 method = None

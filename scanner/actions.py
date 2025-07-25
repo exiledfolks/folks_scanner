@@ -392,14 +392,49 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
                 deduped_nodes[dedup_key] = Node(**v)
     final_nodes = list(deduped_nodes.values())
 
-    if update_nodes:
-        Node.objects.bulk_update(update_nodes, ['raw_link', 'last_speed_kbps', 'last_checked', 'is_working'])
-        print(f'\n✅ Updated {len(update_nodes)} existing configs in Node table')
+    # Split deduped nodes into existing and new, then bulk update/create
     if final_nodes:
-        Node.objects.bulk_create(final_nodes)
-        print(f'\n✅ Saved {len(final_nodes)} new working configs to Node table')
-    if not final_nodes and not update_nodes:
-        print('\n⚠ No working configs found.')
+        node_tuples = [(n.protocol, n.host, n.port, n.user_id) for n in final_nodes]
+        # Query existing nodes from DB
+        existing_nodes_qs = Node.objects.filter(
+            protocol__in=[t[0] for t in node_tuples],
+            host__in=[t[1] for t in node_tuples],
+            port__in=[t[2] for t in node_tuples],
+            user_id__in=[t[3] for t in node_tuples],
+        )
+        existing_keys = set(existing_nodes_qs.values_list('protocol', 'host', 'port', 'user_id'))
+        # Map existing nodes for fast lookup
+        existing_map = {(n.protocol, n.host, n.port, n.user_id): n for n in existing_nodes_qs}
+        to_update = []
+        to_create = []
+        for n in final_nodes:
+            key = (n.protocol, n.host, n.port, n.user_id)
+            if key in existing_keys:
+                # Update fields on the existing node
+                db_node = existing_map[key]
+                db_node.raw_link = n.raw_link
+                db_node.remark = n.remark
+                db_node.last_speed_kbps = n.last_speed_kbps
+                db_node.last_checked = n.last_checked
+                db_node.is_working = n.is_working
+                to_update.append(db_node)
+            else:
+                to_create.append(n)
+
+        if to_update:
+            Node.objects.bulk_update(to_update, ['raw_link', 'remark', 'last_speed_kbps', 'last_checked', 'is_working'])
+            print(f'\n✅ Bulk updated {len(to_update)} configs in Node table')
+        if to_create:
+            Node.objects.bulk_create(to_create)
+            print(f'\n✅ Bulk created {len(to_create)} new configs in Node table')
+        if not to_update and not to_create and not update_nodes:
+            print('\n⚠ No working configs found.')
+    else:
+        if update_nodes:
+            Node.objects.bulk_update(update_nodes, ['raw_link', 'last_speed_kbps', 'last_checked', 'is_working'])
+            print(f'\n✅ Updated {len(update_nodes)} existing configs in Node table')
+        if not update_nodes:
+            print('\n⚠ No working configs found.')
     
     # Cleanup: remove duplicate Node entries based on unique_together constraints
     duplicates = (

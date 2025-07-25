@@ -11,8 +11,8 @@ import time
 
 import requests
 from django.conf import settings
+from django.db.models import Count, Max
 from django.utils import timezone
-from django.db.models import Max, Count
 
 from .models import Channel, Mirror, Node
 
@@ -382,10 +382,15 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
         Node.objects.filter(pk__in=nodes_to_delete).delete()
         print(f'\n🗑️ Deleted {len(nodes_to_delete)} non-working configs from Node table')
 
-    # Add new nodes that are not already kept
+    # Add new nodes that are not already kept, and deduplicate by (protocol, host, port, user_id)
+    deduped_nodes = {}
     for k, v in node_keys.items():
         if k not in nodes_to_keep:
-            final_nodes.append(Node(**v))
+            # Use (protocol, host, port, user_id) as key
+            dedup_key = (v['protocol'], v['host'], v['port'], v['user_id'])
+            if dedup_key not in deduped_nodes:
+                deduped_nodes[dedup_key] = Node(**v)
+    final_nodes = list(deduped_nodes.values())
 
     if update_nodes:
         Node.objects.bulk_update(update_nodes, ['raw_link', 'last_speed_kbps', 'last_checked', 'is_working'])

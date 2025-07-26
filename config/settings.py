@@ -146,3 +146,6 @@ TELEGRAM_API_ID = os.getenv('TELEGRAM_API_ID')
 TELEGRAM_API_HASH = os.getenv('TELEGRAM_API_HASH')
 XRAY_PATH = os.getenv('XRAY_PATH', './xray')
 CSRF_TRUSTED_ORIGINS = [f'http://localhost:{os.getenv("RANDOM_PORT")}' ]
+
+
+FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY")

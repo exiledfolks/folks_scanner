@@ -14,12 +14,12 @@ from django.conf import settings
 from django.db.models import Count, Max
 from django.utils import timezone
 
-from .models import Channel, Mirror, Node
+from .models import Channel, Mirror, Node, Subscription
 
 # === CONFIGURATION ===
 api_id = getattr(settings, 'TELEGRAM_API_ID', None)
 api_hash = getattr(settings, 'TELEGRAM_API_HASH', None)
-timeout = 10
+timeout = 2
 
 try:
     from telethon.sync import TelegramClient  # sync import!
@@ -463,3 +463,52 @@ def run_full_scan_sync(channel_ids=None, mirror_ids=None):
             os.remove(f)
         except Exception as e:
             print(f"Warning: could not remove {f}: {e}")
+
+
+def push_subscription_to_github(subscription_ids=None):
+    """
+    Collect all working nodes and push to the subscription's GitHub link as a file.
+    github_token: Personal access token with repo access
+    """
+    if subscription_ids:
+        subscriptions = Subscription.objects.filter(id__in=subscription_ids, active=True)
+    else:
+        subscriptions = Subscription.objects.filter(active=True)
+
+    if not subscriptions:
+        print("No valid subscriptions found.")
+        return False
+
+    nodes = Node.objects.filter(is_working=True)
+    for sub in subscriptions:
+        # Format as plain text (one link per line)
+        content = '\n'.join(n.raw_link for n in nodes)
+        # GitHub API: create/update file
+        # Parse repo and path from github_url
+        # Example: https://github.com/user/repo/blob/main/sub.txt
+        m = re.match(r'https://github.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)', sub.url)
+        if not m:
+            print('Invalid GitHub URL format')
+            return False
+        owner, repo, branch, path = m.groups()
+        api_url = f'https://api.github.com/repos/{owner}/{repo}/contents/{path}'
+        # Get current file SHA (if exists)
+        headers = {'Authorization': f'token {sub.token}'}
+        r = requests.get(api_url, headers=headers)
+        sha = r.json().get('sha') if r.status_code == 200 else None
+        # Prepare payload
+        import base64
+        payload = {
+            'message': 'Update subscription file',
+            'content': base64.b64encode(content.encode()).decode(),
+            'branch': branch,
+        }
+        if sha:
+            payload['sha'] = sha
+        resp = requests.put(api_url, headers=headers, json=payload)
+        if resp.status_code in [200, 201]:
+            print('✅ Subscription file pushed to GitHub')
+            return True
+        else:
+            print(f'❌ Failed to push: {resp.text}')
+            return False

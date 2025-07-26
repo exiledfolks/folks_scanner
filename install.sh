@@ -44,6 +44,7 @@ else
 fi
 
 echo "⚙️ Creating .env..."
+FERNET_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 cat > .env <<EOF
 DEBUG=False
 SECRET_KEY=$(openssl rand -hex 32)
@@ -52,6 +53,7 @@ TELEGRAM_API_ID=$TELEGRAM_API_ID
 TELEGRAM_API_HASH=$TELEGRAM_API_HASH
 XRAY_PATH=./xray
 CELERY_BROKER_URL=redis://localhost:6379/0
+FIELD_ENCRYPTION_KEY=$FERNET_KEY
 EOF
 
 touch db.sqlite3

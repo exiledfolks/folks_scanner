@@ -3,14 +3,17 @@ asgiref==3.9.1
 billiard==4.2.1
 celery==5.5.3
 certifi==2025.7.14
+cffi==1.17.1
 charset-normalizer==3.4.2
 click==8.2.1
 click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
 cron-descriptor==1.4.5
+cryptography==45.0.5
 Django==5.2.4
 django-celery-beat==2.8.1
+django-encrypted-model-fields==0.6.5
 django-timezone-field==7.1
 django_celery_results==2.6.0
 djangorestframework==3.16.0
@@ -21,6 +24,7 @@ packaging==25.0
 prompt_toolkit==3.0.51
 pyaes==1.6.1
 pyasn1==0.6.1
+pycparser==2.22
 python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1

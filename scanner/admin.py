@@ -1,8 +1,15 @@
 from django.contrib import admin
 
 from .actions import run_full_scan_sync
-from .models import Channel, Mirror, Node
+from .models import Channel, Mirror, Node, Subscription
 
+
+@admin.action(description="Update subscription links for selected records")
+def update_subscriptions(modeladmin, request, queryset):
+    subscription_ids = list(queryset.values_list('id', flat=True))
+    from .actions import push_subscription_to_github
+    push_subscription_to_github(subscription_ids=subscription_ids)
+    modeladmin.message_user(request, f"✅ Update completed for {len(subscription_ids)} selected subscriptions!")
 
 @admin.action(description="Scan and update nodes for selected Mirrors")
 def scan_mirrors(modeladmin, request, queryset):
@@ -18,6 +25,14 @@ def scan_channels(modeladmin, request, queryset):
     run_full_scan_sync(channel_ids=channel_ids)
     modeladmin.message_user(request, f"✅ Scan completed for {len(channel_ids)} selected channels!")
 
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('url', 'active', 'updated_at')
+    list_filter = ('active',)
+    search_fields = ('url',)
+    actions = [update_subscriptions]
 
 
 @admin.register(Mirror)

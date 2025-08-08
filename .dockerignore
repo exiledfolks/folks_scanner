@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Virtual environments
+folks_venv/
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Documentation
+README.md
+*.md
+
+# Install scripts
+install.sh
+install_windows.sh
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Environment files (will be created in container)
+.env
+
+# SQLite database (will be created in container)
+db.sqlite3

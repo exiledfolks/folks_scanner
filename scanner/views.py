@@ -21,5 +21,5 @@ class WorkingNodesView(APIView):
     renderer_classes = [PlainTextRenderer]
 
     def get(self, request):
-        links = Node.objects.filter(is_working=True).values_list('raw_link', flat=True)
+        links = Node.objects.filter(is_working=True).order_by("protocol").values_list('raw_link', flat=True)
         return Response('\n'.join(links) + '\n', content_type='text/plain; charset=utf-8', status=status.HTTP_200_OK)
